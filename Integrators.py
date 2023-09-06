@@ -1,5 +1,24 @@
 import numpy as np
 
+# Constants
+G_const = 6.67e-11 # Grav constant in [ N*m^2/kg^2 ]
+
+# Right-hand side for Keplerian Eq
+# Inputs:
+# - x_vec[ 3 ]: position vector in [R_e == Earth Radii]
+# - v_vec[ 3 ]: velocity vector in [MG/R_e]
+# Outputs:
+# - rhs[ 6 ] -> [ rhs[ 0:3 ] , rhs[ 3:6 ] ] ( position and velocity RHS )
+def rhs_Kepler( x_vec , v_vec ):
+
+    rhs = np.zeros( 6 )
+    r_3 = np.sqrt( np.dot( x_vec , x_vec ) )**3.0
+    for i in range( 0 , 3 ):
+        rhs[ i ] = v_vec[ i ]
+        rhs[ i + 3 ] = - x_vec[ i ]/r_3
+
+    return rhs
+
 # Right-hand side for oscillator diff equation
 # Inputs:
 # - m: mass of the oscillator
@@ -255,3 +274,81 @@ def Verlet_Ballistic( beta , g_acc , r0_vec , v0_vec , init_c ):
 
     # Return the time array and solutions
     return t_arr, r_sol, v_sol
+
+# Integrate Keplerian orbital propagation by RK4 method
+# Inputs:
+# - M: mass of the central body [kg]
+# - R0: radius of the central body [km]
+# - x0_vec[ 3 ]: initial position in [km] 
+# - v0_vec[ 3 ]: initial velocity in [km/sec]
+# - init_c: [ t_i , t_f , Nsteps (int) ]
+# Outputs:
+# - t_arr[ N ] -> time array
+# - x_sol[ N ][ 3 ] -> solution in position
+# - v_sol[ N ][ 3 ] -> solution in velocity
+def Kepler_RK4( M , R0 , x0_vec , v0_vec , init_c ):
+
+    # Unpackage the initial conditions vector into:
+    t_i = init_c[ 0 ] # Initial time
+    t_f = init_c[ 1 ] # Final time
+    Nsteps = int( init_c[ 2 ] ) # Number of steps -> INTEGER
+
+    # Create an array starting at t_i, ending at t_f with Nsteps steps
+    t_arr = np.linspace( t_i , t_f , Nsteps )
+    # Find our time step
+    dt = ( t_f - t_i )/( float( Nsteps ) - 1.0 )
+
+    # Initialize the arrays to hold the solution
+    x_sol = np.zeros( ( Nsteps , 3 ) )
+    v_sol = np.zeros( ( Nsteps , 3 ) )
+
+    # Norming constants -> we will use dimensionless units, these will carry all dimensionality
+    R_dim = R0 # Char radius in [km]
+    V_dim = np.sqrt( M*G_const/( 1000*R0 ) )/1000.0 # Char speed in [km/sec]
+    T_dim = R_dim/V_dim # Char time in [sec]
+
+    # Pass the initial conditions to the solution and norm it
+    t_arr /= T_dim
+    dt /= T_dim
+    x_sol[ 0 ] = x0_vec/R_dim
+    v_sol[ 0 ] = v0_vec/V_dim
+
+    # Initialize Runge-Kutta constants
+    # k_RK[ i ] will hold the entire vector 
+    k_RK = np.zeros( ( 4 , 6 ) )
+    # Temporary vectors for holding intermediate RK steps
+    x_temp = np.zeros( 3 )
+    v_temp = np.zeros( 3 )
+
+    # INTEGRATE HERE - RK(4) LOOP
+    for i in range( 0 , Nsteps - 1 ):
+
+        # Testng out just an Euler integrator
+        #rhs_vec = rhs_Kepler( x_sol[ i ] , v_sol[ i ] )
+        #x_sol[ i + 1 ] = x_sol[ i ] + rhs_vec[ 0:3 ]*dt
+        #v_sol[ i + 1 ] = v_sol[ i ] + rhs_vec[ 3:6 ]*dt
+        
+        k_RK[ 0 ] = rhs_Kepler( x_sol[ i ] , v_sol[ i ] )
+
+        for j in range( 0 , 3 ):
+            x_temp[ j ] = x_sol[ i ][ j ] + k_RK[ 0 ][ j ]*dt/2.0
+            v_temp[ j ] = v_sol[ i ][ j ] + k_RK[ 0 ][ j + 3 ]*dt/2.0
+        k_RK[ 1 ] = rhs_Kepler( x_temp , v_temp )
+
+        for j in range( 0 , 3 ):
+            x_temp[ j ] = x_sol[ i ][ j ] + k_RK[ 1 ][ j ]*dt/2.0
+            v_temp[ j ] = v_sol[ i ][ j ] + k_RK[ 1 ][ j + 3 ]*dt/2.0
+        k_RK[ 2 ] = rhs_Kepler( x_temp , v_temp )
+
+        for j in range( 0 , 3 ):
+            x_temp[ j ] = x_sol[ i ][ j ] + k_RK[ 2 ][ j ]*dt
+            v_temp[ j ] = v_sol[ i ][ j ] + k_RK[ 2 ][ j + 3 ]*dt
+        k_RK[ 3 ] = rhs_Kepler( x_temp , v_temp )
+
+        for j in range( 0 , 3 ):
+            x_sol[ i + 1 ][ j ] = x_sol[ i ][ j ] + ( k_RK[ 0 ][ j ] + 2.0*k_RK[ 1 ][ j ] + 2.0*k_RK[ 2 ][ j ] + k_RK[ 3 ][ j ] )*dt/6.0
+            v_sol[ i + 1 ][ j ] = v_sol[ i ][ j ] + ( k_RK[ 0 ][ j + 3 ] + 2.0*k_RK[ 1 ][ j + 3 ] + 2.0*k_RK[ 2 ][ j + 3 ] + k_RK[ 3 ][ j + 3 ] )*dt/6.0
+        
+        #print( k_RK )
+    # Return the time array and solutions
+    return t_arr*T_dim, x_sol*R_dim, v_sol*V_dim
